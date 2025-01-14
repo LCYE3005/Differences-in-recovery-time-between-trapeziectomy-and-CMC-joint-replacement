@@ -1,0 +1,217 @@
+# Title: Run meta analysis and create:
+####  1) separate forest + funnel plots
+####  2) pooled effects plots
+# Date: 02/12/2024
+
+# Set working directory and load packages----
+
+getwd()
+{
+  library(readxl)
+  library(dplyr)
+  library(metafor)
+  library(readr)
+  library(ggplot2)
+}
+
+
+setwd("L:/Sabrina/Lauren/LC-MetaAnalysis/LC-MetaAnalysis-02122024/DASH-MA")
+
+# Load input data
+
+data <- read_excel("L:/Sabrina/Lauren/LC-MetaAnalysis/LC-MetaAnalysis-02122024/LC 9 dec Trapzeictomy vs Joint Replacment data.xlsx", sheet = "DASH (done)", na="")
+
+# Clean input data--------
+
+## What are the names of interventions?
+table(data$`Intervention`)
+
+# Fix spelling errors
+data <- data %>% 
+  mutate("Intervention" = ifelse(Intervention=="Trapezeictomy", "Trapeziectomy", Intervention))
+
+colnames(data)
+data$author_arm <- paste(data$Study_Author," ","(",data$Study_Arm,")", sep="")
+
+# Create Arthroplasty subset
+art_subset <- data %>% filter(`Intervention` == "Joint Replacement")
+# Create Endoscopic subset
+trap_subset <- data %>% filter(`Intervention` == "Trapeziectomy")
+
+colnames(data)
+
+
+# Define functions -----
+
+meta_analysis_re2 <- function(data, data_name, mean_from, sd_from, time_point_mean, time_point_sd, time_label) {
+  
+  # Load necessary libraries
+  library(metafor)
+  library(ggplot2)
+  
+  # Impute missing values for the columns
+  # Calculate the mean of the 'from' and 'to' time point data for imputation
+  mean_from_value <- mean(data[[mean_from]], na.rm = TRUE)
+  sd_from_value <- mean(data[[sd_from]], na.rm = TRUE)
+  time_point_mean_value <- mean(data[[time_point_mean]], na.rm = TRUE)
+  time_point_sd_value <- mean(data[[time_point_sd]], na.rm = TRUE)
+  
+  # Impute missing values with the mean of the available data
+  data[[mean_from]][is.na(data[[mean_from]])] <- mean_from_value
+  data[[sd_from]][is.na(data[[sd_from]])] <- sd_from_value
+  data[[time_point_mean]][is.na(data[[time_point_mean]])] <- time_point_mean_value
+  data[[time_point_sd]][is.na(data[[time_point_sd]])] <- time_point_sd_value
+  
+  # Subset rows that have valid data for the 'to' time point
+  data_time <- data[!is.na(data[[time_point_mean]]) & !is.na(data[[time_point_sd]]), ]
+  
+  # Check if k (the number of valid rows) is greater than 0
+  k <- nrow(data_time)
+  
+  if (k > 0) {
+    # Proceed with meta-analysis
+    data_time$smc <- (data_time[[time_point_mean]] - data_time[[mean_from]]) / data_time[[sd_from]]
+    data_time$var_smc <- (data_time$N_In_Arm + data_time$smc^2) / data_time$N_In_Arm
+    
+    # Random-Effects Meta-Analysis
+    res_re <- rma(yi = data_time$smc, vi = data_time$var_smc, method = "REML", data = data_time)
+    
+    # Forest Plot
+    jpeg(file=paste0("BB-MA-dash-FFplots/",data_name,"_","Forest_Plot_", time_label, "months.jpeg"), width=10, height=8, units="in", res=1200)
+    forest(res_re, slab = data_time$author_arm,
+           xlab = "Standardized Mean Change", 
+           sub = paste("Score Change at", time_label, "months"))
+    dev.off()
+    
+    # Funnel Plot
+    jpeg(file=paste0("BB-MA-dash-FFplots/",data_name,"_","Funnel_Plot_", time_label, "months.jpeg"), width=10, height=8, units="in", res=1200)
+    funnel(res_re)
+    dev.off()
+    
+    # Return result summary
+    result_data <- data.frame("time_point" = time_label, "SMC" = res_re$beta, "lCI" = res_re$ci.lb, "uCI" = res_re$ci.ub)
+    
+  } else {
+    # If no valid rows even after imputation, return NA
+    result_data <- data.frame("time_point" = time_label, "SMC" = NA, "lCI" = NA, "uCI" = NA)
+  }
+  
+  row.names(result_data) <- NULL
+  return(result_data)
+}
+
+
+# Meta Analysis-----
+
+# Run meta-analysis for each time point combined and save plots as JPEG
+meta_analysis_re2(data = data, data_name = "dash_all_data", "Mean_Baseline", "SD_Baseline", "Mean_1month", "SD_1month", "1")
+meta_analysis_re2(data = data, data_name = "dash_all_data", "Mean_Baseline", "SD_Baseline", "Mean_3months", "SD_3months", "3")
+meta_analysis_re2(data = data, data_name = "dash_all_data", "Mean_Baseline", "SD_Baseline", "Mean_6months", "SD_6months", "6")
+meta_analysis_re2(data = data, data_name = "dash_all_data", "Mean_Baseline", "SD_Baseline", "Mean_12months", "SD_12months", "12")
+
+
+# Run meta-analysis for each time point - "ARTHROPLASTY" subset
+
+meta_analysis_re2(data = art_subset, data_name = "dash_arthroplasty", "Mean_Baseline", "SD_Baseline", "Mean_1month", "SD_1month", "1")
+meta_analysis_re2(data = art_subset, data_name = "dash_arthroplasty", "Mean_Baseline", "SD_Baseline", "Mean_3months", "SD_3months", "3")
+meta_analysis_re2(data = art_subset, data_name = "dash_arthroplasty", "Mean_Baseline", "SD_Baseline", "Mean_6months", "SD_6months", "6")
+meta_analysis_re2(data = art_subset, data_name = "dash_arthroplasty", "Mean_Baseline", "SD_Baseline", "Mean_12months", "SD_12months", "12")
+
+# Run meta-analysis for each time point - "TRAPEZIECTOMY" subset
+meta_analysis_re2(data = trap_subset, data_name = "dash_trapeziectomy", "Mean_Baseline", "SD_Baseline", "Mean_1month", "SD_1month", "1")
+meta_analysis_re2(data = trap_subset, data_name = "dash_trapeziectomy", "Mean_Baseline", "SD_Baseline","Mean_3months", "SD_3months", "3")
+meta_analysis_re2(data = trap_subset, data_name = "dash_trapeziectomy", "Mean_Baseline", "SD_Baseline","Mean_6months", "SD_6months", "6")
+meta_analysis_re2(data = trap_subset, data_name = "dash_trapeziectomy", "Mean_Baseline", "SD_Baseline","Mean_12months", "SD_12months", "12")
+
+
+#### SAVE POOLED EFFECTS---
+
+
+# Define a NEW function to perform meta-analysis and return the pooled effect size
+meta_analysis_re3 <- function(data,time_point_mean, time_point_sd, time_label) {
+  
+  # Subset rows that have NA for the specific time point
+  data_time <- data[!is.na(data[[time_point_mean]]) & !is.na(data[[time_point_sd]]), ]
+  
+  # Compute the standardized mean change and its variance
+  data_time$smc <- (data_time[[time_point_mean]] - data_time$Mean_Baseline) / data_time$SD_Baseline
+  data_time$var_smc <- (data_time$N_In_Arm + data_time$smc^2) / data_time$N_In_Arm 
+  
+  # Random-Effects Meta-Analysis
+  res_re <- rma(yi = data_time$smc, vi = data_time$var_smc, method = "REML", data = data_time)
+  
+  # Forest Plot to visualize the results
+  p <- forest(res_re, slab = data_time$Study_Author, 
+              xlab = "Standardised Mean Change",
+              sub = paste("Score Change at", time_label, "months"))
+  
+  # Return the pooled effect size
+  return(res_re$b)
+}
+
+# (ALL) Run meta-analysis for each time point and store the pooled effect sizes
+pooled_effects_all <- c()
+pooled_effects_all <- c(pooled_effects_all, meta_analysis_re3(data=data, "Mean_1month", "SD_1month", "1"))
+pooled_effects_all <- c(pooled_effects_all, meta_analysis_re3(data=data,"Mean_3months", "SD_3months", "3"))
+pooled_effects_all <- c(pooled_effects_all, meta_analysis_re3(data=data,"Mean_6months", "SD_6months", "6"))
+pooled_effects_all <- c(pooled_effects_all, meta_analysis_re3(data=data,"Mean_12months", "SD_12months", "12"))
+
+# Plot pooled effects
+plot(1:length(pooled_effects_all), pooled_effects_all, type = "b", 
+     xlab = "Time Point", ylab = "Pooled Effect Size",
+     main = "Pooled Effect Sizes over Time SMC (all)")
+
+
+# Run meta-analysis for each time point and store the pooled effect sizes - arthroplasty subset
+pooled_effects_art <- c()
+pooled_effects_art <- c(pooled_effects_art, meta_analysis_re3(data=art_subset,"Mean_1month", "SD_1month", "1"))
+pooled_effects_art <- c(pooled_effects_art, meta_analysis_re3(data=art_subset,"Mean_3months", "SD_3months", "3"))
+pooled_effects_art <- c(pooled_effects_art, meta_analysis_re3(data=art_subset,"Mean_6months", "SD_6months", "6"))
+pooled_effects_art <- c(pooled_effects_art, meta_analysis_re3(data=art_subset,"Mean_12months", "SD_12months", "12"))
+
+# Plot pooled effects
+plot(1:length(pooled_effects_art), pooled_effects_art, type = "b", 
+     xlab = "Time Point", ylab = "Pooled Effect Size",
+     main = "Pooled Effect Sizes over Time SMC Arthroplasty Subset")
+
+
+
+# Run meta-analysis for each time point and store the pooled effect sizes - TRAPEZIECTOMY
+pooled_effects_trap <- c()
+pooled_effects_trap <- c(pooled_effects_trap, meta_analysis_re3(data=trap_subset,"Mean_1month", "SD_1month", "1"))
+pooled_effects_trap <- c(pooled_effects_trap, meta_analysis_re3(data=trap_subset,"Mean_3months", "SD_3months", "3"))
+pooled_effects_trap <- c(pooled_effects_trap, meta_analysis_re3(data=trap_subset,"Mean_6months", "SD_6months", "6"))
+pooled_effects_trap <- c(pooled_effects_trap, meta_analysis_re3(data=trap_subset,"Mean_12months", "SD_12months", "12"))
+
+
+# Plot pooled effects
+plot(1:length(pooled_effects_trap), pooled_effects_trap, type = "b", 
+     xlab = "Time Point", ylab = "Pooled Effect Size",
+     main = "Pooled Effect Sizes over Time SMC Trapeziectomy Subset")
+
+
+### PLOT ALL POOLED EFFECTS TOGETHER
+
+
+all_PE <- data.frame("Intervention_arm" = rep(c("All"),4), "Pooled_Effect_Size" = pooled_effects_all, "Months" = c(1,3,6,12), "TP" = c(1,2,3,4))
+all_art <- data.frame("Intervention_arm" = rep(c("Arthroplasty"),4), "Pooled_Effect_Size" = pooled_effects_art, "Months" = c(1,3,6,12), "TP" = c(1,2,3,4))
+all_trap <- data.frame("Intervention_arm" = rep(c("Trapeziectomy"),4), "Pooled_Effect_Size" = pooled_effects_trap, "Months" = c(1,3,6,12), "TP" = c(1,2,3,4))
+# Combine datasets
+pooled_effects_summary <- rbind(all_PE, all_art, all_trap)
+
+#Plot combined datasets
+pooled_effects_summary %>% 
+  ggplot(aes(x=Months, y=Pooled_Effect_Size, colour=Intervention_arm)) +
+  geom_line(alpha=0.5, linewidth = 0.8) + 
+  geom_point(alpha=0.5, size = 1.5) +
+  scale_x_continuous(breaks = seq(0, 12, by = 3), limits = c(0, 12)) +
+  theme_minimal() + 
+  # Specify plot text size
+  theme(text = element_text(size = 14), 
+        plot.background = element_rect(fill = "white", colour = NA)) +
+  # Specify what the label text is
+  labs( x="Months", y="Pooled Effect Size")  +
+  scale_colour_manual(name = "Intervention Type", values = c("black", "red3", "deepskyblue2"))
+
+#ggsave("CC-pooled-effects-plots/dash_pooled_effects_size_SMC.jpeg", dpi=600)
+

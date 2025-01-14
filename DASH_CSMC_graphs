@@ -1,0 +1,249 @@
+# Title: Create cumulative standardised mean change time series
+# Date: 02/12/2024
+
+#========================================================#
+# 1 FUNCTIONS-----
+#========================================================#
+
+meta_analysis_combined <- function(data, 
+                                   mean_from, sd_from, 
+                                   time_point_mean, time_point_sd, 
+                                   time_label) {
+  
+  # Load necessary libraries
+  library(metafor)
+  # Subset rows that have valid data for the specific time point
+  data_time <- data[!is.na(data[[time_point_mean]]) & !is.na(data[[time_point_sd]]), ]
+    
+  # Compute the standardized mean change and its variance
+  data_time$smc <- (data_time[[time_point_mean]] - data_time[[mean_from]]) / data_time[[sd_from]]
+  data_time$var_smc <- (data_time$N_In_Arm + data_time$smc^2) / data_time$N_In_Arm
+  
+  # Random-Effects Meta-Analysis
+  res_re <- rma(yi = data_time$smc, vi = data_time$var_smc, method = "REML", data = data_time)
+  
+  # Return result summary
+  result_data <- data.frame("time_point" = time_label, "SMC" = res_re$beta, "lCI" = res_re$ci.lb, "uCI" = res_re$ci.ub)
+  # Return the result with the time point label
+  row.names(result_data) <- NULL
+  return(result_data)
+  }
+
+
+#============================================================#
+# 2 IMPORT DATA -----
+#============================================================#
+
+getwd()
+{
+  library(readxl)
+  library(dplyr)
+  library(metafor)
+  library(readr)
+  library(ggplot2)
+}
+
+# Load input data
+
+setwd("L:/Sabrina/Lauren/LC-MetaAnalysis/LC-MetaAnalysis-02122024/DASH-MA")
+
+data <- read_excel("L:/Sabrina/Lauren/LC-MetaAnalysis/LC-MetaAnalysis-02122024/LC 9 dec Trapzeictomy vs Joint Replacment data.xlsx", sheet = "DASH (done)", na="")
+
+
+# Clean input data--------
+
+## What are the names of interventions?
+table(data$`Intervention`)
+
+# Fix spelling errors
+data <- data %>% 
+  mutate("Intervention" = ifelse(Intervention=="Trapezeictomy", "Trapeziectomy", Intervention))
+
+colnames(data)
+data$author_arm <- paste(data$Study_Author," ","(",data$Study_Arm,")", sep="")
+
+# Create Arthroplasty subset
+art_subset <- data %>% filter(`Intervention` == "Joint Replacement")
+# Create Endoscopic subset
+trap_subset <- data %>% filter(`Intervention` == "Trapeziectomy")
+
+colnames(data)
+
+
+#=====================================================#
+# 3 DATA PREP ----
+#=====================================================#
+
+## Impute means for missing values in arthroplasty subset
+dat1 <- art_subset
+colnames(dat1)
+
+# Define the columns to work on (columns 9 to 18)
+mean_columns <- colnames(dat1)[9:18]
+
+# Loop over each column and replace NA with the weighted mean
+for (col in mean_columns) {
+  
+  # Identify rows that have non-NA values in the column and N_In_Arm
+  non_na_rows <- !is.na(dat1[[col]]) & !is.na(dat1$N_In_Arm)
+  
+  # Calculate the weighted mean based on non-NA rows and N_In_Arm
+  if (sum(non_na_rows) > 0) {  # Ensure there are rows with valid data
+    weighted_mean <- sum(dat1[[col]][non_na_rows] * dat1$N_In_Arm[non_na_rows], na.rm = TRUE) / 
+      sum(dat1$N_In_Arm[non_na_rows], na.rm = TRUE)
+    
+    # Replace NA values with the calculated weighted mean
+    dat1[[col]][is.na(dat1[[col]])] <- weighted_mean
+  }
+}
+
+# Check
+str(dat1)
+
+## Impute means for missing values in trapeziectomy subset
+dat2 <- trap_subset
+
+# Define the columns to work on (columns 9 to 18)
+mean_columns <- colnames(dat2)[9:18]
+
+# Loop over each column and replace NA with the weighted mean
+for (col in mean_columns) {
+  
+  # Identify rows that have non-NA values in the column and N_In_Arm
+  non_na_rows <- !is.na(dat2[[col]]) & !is.na(dat2$N_In_Arm)
+  
+  # Calculate the weighted mean based on non-NA rows and N_In_Arm
+  if (sum(non_na_rows) > 0) {  # Ensure there are rows with valid data
+    weighted_mean <- sum(dat2[[col]][non_na_rows] * dat2$N_In_Arm[non_na_rows], na.rm = TRUE) / 
+      sum(dat2$N_In_Arm[non_na_rows], na.rm = TRUE)
+    
+    # Replace NA values with the calculated weighted mean
+    dat2[[col]][is.na(dat2[[col]])] <- weighted_mean
+  }
+}
+
+# Re-assign to open vs endoscopic subsets
+art_subset <- dat1
+trap_subset <- dat2
+
+
+#=================================================#
+# 4 ANALYSIS----
+#=================================================#
+
+## SMC + CIs for Arthroplasty Subset
+
+## 1 month---
+## csmc
+(art_1month <- meta_analysis_combined(data=art_subset, "Mean_Baseline", "SD_Baseline", "Mean_1month", "SD_1month", "1"))
+
+## 3 months---
+## csmc
+(art_3month <- meta_analysis_combined(data=art_subset, "Mean_1month", "SD_1month", "Mean_3months", "SD_3months", "3"))
+
+## 6 months---
+## csmc : 
+(art_6month <- meta_analysis_combined(data=art_subset, "Mean_3months", "SD_3months", "Mean_6months", "SD_6months", "6"))
+
+## 12 months---
+## csmc : 
+(art_12month <- meta_analysis_combined(data=art_subset,  "Mean_6months", "SD_6months", "Mean_12months", "SD_12months", "12"))
+
+art_smc_data <- rbind(art_1month, art_3month, art_6month, art_12month)
+
+# add time_point column
+art_smc_data$time_point <- as.numeric(art_smc_data$time_point)
+# create rows for missing data values
+art_smc_data <- rbind(0, art_smc_data)
+
+# Sort the data by time_point to ensure proper calculation
+art_smc_data <- art_smc_data[order(art_smc_data$time_point), ]
+art_smc_data
+
+# Calculate cumulative changes
+art_smc_data$smc_cum <- cumsum(art_smc_data$SMC)
+# Calculate cumulative lower CI
+art_smc_data$cumulative_lCI <- cumsum(art_smc_data$lCI)
+# Calculate cumulative upper CI
+art_smc_data$cumulative_uCI <- cumsum(art_smc_data$uCI)
+
+
+## SMC + CIs for Endoscopic Subset
+
+## 1 month---
+## csmc
+(trap_1month <- meta_analysis_combined(data=trap_subset, "Mean_Baseline", "SD_Baseline", "Mean_1month", "SD_1month", "1"))
+
+## 3 months---
+## csmc
+(trap_3month <- meta_analysis_combined(data=trap_subset, "Mean_1month", "SD_1month", "Mean_3months", "SD_3months", "3"))
+
+## 6 months---
+## csmc 
+(trap_6month <- meta_analysis_combined(data=trap_subset, "Mean_3months", "SD_3months", "Mean_6months", "SD_6months", "6"))
+
+## 12 months---
+(trap_12month <- meta_analysis_combined(data=trap_subset, "Mean_6months", "SD_6months", "Mean_12months", "SD_12months", "12"))
+
+trap_smc_data <- rbind(trap_1month, trap_3month, trap_6month, trap_12month)
+
+trap_smc_data$time_point <- as.numeric(trap_smc_data$time_point)
+trap_smc_data <- rbind(0, trap_smc_data)
+# Sort the data by time_point to ensure proper calculation
+trap_smc_data <- trap_smc_data[order(trap_smc_data$time_point), ]
+
+# Calculate cumulative changes
+trap_smc_data$smc_cum <- cumsum(trap_smc_data$SMC)
+# Calculate cumulative lower CI
+trap_smc_data$cumulative_lCI <- cumsum(trap_smc_data$lCI)
+# Calculate cumulative upper CI
+trap_smc_data$cumulative_uCI <- cumsum(trap_smc_data$uCI)
+
+# identify which time_points in which dataset need dummy data
+art_smc_data$time_point
+trap_smc_data$time_point
+
+# Add intervention names
+art_smc_data$intervention <- "Joint Replacement"
+trap_smc_data$intervention <- "Trapeziectomy"
+
+### Create dataset for plot
+smc_dat <- rbind(art_smc_data, trap_smc_data)
+str(smc_dat)
+smc_dat
+# Save Cumulative SMC data from plot
+#write.csv(smc_dat[,c(1,5:8)], "EE-smc_datasets/dash_SMC_from_previous_timepoint.csv", row.names = FALSE)
+getwd()
+#==================================================#
+# 5 PLOT ----
+#==================================================#
+
+timepoints <- c(0,1,3,6,12) ## data for plotting
+
+cols <- c("Joint Replacement" = "red3", "Trapeziectomy" = "lightblue")
+
+par(mfrow=c(1,1))
+dash_smc_plot <-  smc_dat %>% 
+  filter(time_point %in% timepoints) %>%
+  ggplot(aes(x = time_point, y = smc_cum, color = as.factor(intervention))) +
+  geom_line(size=1) +
+  geom_point(size = 1.2) +
+  geom_ribbon(aes(ymin = cumulative_lCI, ymax = cumulative_uCI, fill=as.factor(intervention)), alpha = 0.2) +
+  scale_x_continuous(breaks = seq(0, 12, by = 3), limits = c(0, 12)) +
+  theme_minimal() +
+  theme(text = element_text(size = 16), 
+        plot.background = element_rect(fill = "white", colour = NA)) +
+  labs(x = "Months", 
+       y = "Cumulative Standardised Mean Change") +
+  scale_colour_manual(values = cols) +
+  scale_fill_manual(values = cols) +
+  theme(legend.title=element_blank()) +
+  theme(legend.position = "bottom")
+
+ggsave("dash_smc.pdf",
+       plot = dash_smc_plot,
+       path = "L:/Sabrina/Lauren/LC-MetaAnalysis/LC-MetaAnalysis-02122024/DASH-MA/DD-cumulative-smc-change-plot/",
+dpi = 300)
+  
+
+
